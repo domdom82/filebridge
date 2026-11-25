@@ -2,7 +2,9 @@ package fb
 
 import (
 	"errors"
+	"log/slog"
 	"sync"
+	"time"
 )
 
 var (
@@ -39,6 +41,15 @@ func GetClientLink(id string) (*Link, error) {
 	return link, nil
 }
 
+// call while holding mu.Lock()
+func removeClientLink(link *Link) {
+	linksPerClient[link.client]--
+	if linksPerClient[link.client] == 0 {
+		delete(linksPerClient, link.client)
+	}
+	delete(links, link.id)
+}
+
 func RemoveClientLink(link *Link) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -48,10 +59,22 @@ func RemoveClientLink(link *Link) error {
 	if _, exists := linksPerClient[link.client]; !exists {
 		return nil
 	}
-	linksPerClient[link.client]--
-	if linksPerClient[link.client] == 0 {
-		delete(linksPerClient, link.client)
-	}
-	delete(links, link.id)
+	removeClientLink(link)
 	return nil
+}
+
+func StartLinkGarbageCollector(gcInterval time.Duration) {
+	ticker := time.NewTicker(gcInterval)
+	go func() {
+		for range ticker.C {
+			mu.Lock()
+			for _, link := range links {
+				if link.IsExpired() {
+					slog.Info("Removing expired link", "linkId", link.id, "client", link.client)
+					removeClientLink(link)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
 }

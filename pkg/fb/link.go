@@ -26,8 +26,6 @@ type Link struct {
 	id                string
 	client            string
 	ctx               context.Context
-	createdAt         int64
-	timeout           int64
 	senderRequest     *http.Request
 	senderResponse    http.ResponseWriter
 	receiverRequest   *http.Request
@@ -45,8 +43,6 @@ func NewLink(client, linkPrefix string, timeout time.Duration) *Link {
 		id:                generateLinkId(linkPrefix),
 		client:            client,
 		ctx:               ctxExpired,
-		createdAt:         time.Now().Unix(),
-		timeout:           int64(timeout.Seconds()),
 		senderConnected:   make(chan bool, 1),
 		receiverConnected: make(chan bool, 1),
 		done:              make(chan struct{}),
@@ -62,7 +58,12 @@ func (l *Link) Id() string {
 }
 
 func (l *Link) IsExpired() bool {
-	return time.Now().Unix()-l.createdAt > l.timeout
+	if l.ctx.Err() != nil {
+		if errors.Is(context.Cause(l.ctx), ErrLinkExpired) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *Link) SetSender(req *http.Request, res http.ResponseWriter) error {

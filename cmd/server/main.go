@@ -13,6 +13,7 @@ import (
 )
 
 var linkTimeout = 5 * time.Minute // TODO: make this configurable
+var gcInterval = 10 * time.Minute // TODO: make this configurable
 var maxLinksPerClient = 10        // TODO: make this configurable
 
 // shardPrefix will later be used to identify the shard of the link server. Can be zoned by a load balancer
@@ -29,6 +30,9 @@ func main() {
 	mux.HandleFunc("/link/", genLink)
 	mux.HandleFunc("/link/{linkId}", handleLink)
 
+	fb.StartLinkGarbageCollector(gcInterval)
+	//FIXME: don't use the default http server, use a custom one with timeouts and graceful shutdown
+	slog.Info("Starting link server", "host", externalHost, "scheme", scheme, "shardPrefix", shardPrefix, "linkTimeout", linkTimeout.String(), "gcInterval", gcInterval.String(), "maxLinksPerClient", maxLinksPerClient)
 	http.ListenAndServe(":8080", mux)
 }
 
@@ -52,9 +56,11 @@ func genLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("Generated link", "linkId", link.Id(), "client", client, "expiresAt", time.Now().Add(linkTimeout).String())
 	externalLink := fmt.Sprintf("%s://%s/link/%s", scheme, externalHost, link.Id())
 
 	//TODO: this should be a proper HTML page with instructions and curl commands for sender and receiver
+	//TODO: also include instructions for e2e encryption using OpenSSL
 	sb := strings.Builder{}
 	sb.WriteString("Link is valid for " + linkTimeout.String() + "\n\n")
 	sb.WriteString("Sender:\n\t")
@@ -102,6 +108,7 @@ func handleLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost || r.Method == http.MethodPut {
 		if err := link.Wait(r.Context()); err != nil {
+			slog.Error("Sender finished with error", "linkId", linkId, "error", err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 		} else {
 			w.Write([]byte("OK\n"))
